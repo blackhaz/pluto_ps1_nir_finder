@@ -6,6 +6,10 @@ Create a printable Pluto finder chart using Pan-STARRS DR1 only:
   - Pan-STARRS DR1 z-band magnitudes for star-dot scaling
 
 This version does NOT query APASS.
+
+By default the chart is centered on Pluto at the requested time.
+Use --center-ra/--center-dec (or --center-datetime) to keep a fixed field center
+across times so Pluto motion becomes obvious between charts.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from matplotlib.patches import Ellipse
 
 PS1_CATALOG = "II/349/ps1"
 PLUTO_RADIUS = 1188.3 * u.km
+STAR_DIAMETER_SCALE = 2.0
 
 
 def parse_time(dt_text: str) -> Time:
@@ -104,20 +109,24 @@ def magnitude_to_marker_size(
       mag 3 -> 5 mm
       mag 4 -> 2 mm
 
+    All diameters are multiplied by STAR_DIAMETER_SCALE.
+
     For magnitudes fainter than 4, diameter decreases smoothly (log-space interpolation)
-    down to exactly 1 output pixel at zmag_limit.
+    down to STAR_DIAMETER_SCALE output pixels at zmag_limit.
     """
     zmag = np.asarray(zmag, dtype=float)
 
-    # 1 output pixel converted to mm at the chosen save DPI
-    min_diam_mm = 25.4 / float(output_dpi)
+    scale = STAR_DIAMETER_SCALE
+
+    # Scaled output-pixel floor converted to mm at the chosen save DPI.
+    min_diam_mm = scale * 25.4 / float(output_dpi)
 
     if zmag_limit <= 4.0:
         mag_nodes = np.array([0.0, 1.0, 3.0, 4.0], dtype=float)
-        diam_nodes_mm = np.array([20.0, 10.0, 5.0, 2.0], dtype=float)
+        diam_nodes_mm = np.array([20.0 * scale, 10.0 * scale, 5.0 * scale, 2.0 * scale], dtype=float)
     else:
         mag_nodes = np.array([0.0, 1.0, 3.0, 4.0, zmag_limit], dtype=float)
-        diam_nodes_mm = np.array([20.0, 10.0, 5.0, 2.0, min_diam_mm], dtype=float)
+        diam_nodes_mm = np.array([20.0 * scale, 10.0 * scale, 5.0 * scale, 2.0 * scale, min_diam_mm], dtype=float)
 
     # Interpolate diameters in log-space so size changes feel atlas-like and smooth.
     mags = np.clip(zmag, mag_nodes[0], mag_nodes[-1])
@@ -128,8 +137,8 @@ def magnitude_to_marker_size(
     diam_pt = diam_mm * 72.0 / 25.4
     area_pt2 = np.pi * (diam_pt / 2.0) ** 2
 
-    # Enforce at least 1-pixel diameter in output.
-    min_diam_pt = 72.0 / float(output_dpi)
+    # Enforce at least STAR_DIAMETER_SCALE pixels diameter in output.
+    min_diam_pt = STAR_DIAMETER_SCALE * 72.0 / float(output_dpi)
     min_area_pt2 = np.pi * (min_diam_pt / 2.0) ** 2
     return np.maximum(area_pt2, min_area_pt2)
 
@@ -208,6 +217,7 @@ def add_orientation_arrows(ax):
 
 def make_plot(
     pluto: SkyCoord,
+    chart_center: SkyCoord,
     obstime: Time,
     star_coords: SkyCoord,
     zmag: np.ndarray,
@@ -218,8 +228,8 @@ def make_plot(
     output_dpi: int,
 ):
     """Render and save the finder chart (black-on-white printable style)."""
-    ra_center = pluto.ra.deg
-    dec_center = pluto.dec.deg
+    ra_center = chart_center.ra.deg
+    dec_center = chart_center.dec.deg
 
     # Convert RA to continuous values around Pluto so axis is not broken at RA=0/24.
     ra_plot = unwrap_ra_around(star_coords.ra.deg, ra_center)
@@ -243,6 +253,7 @@ def make_plot(
         & (dec_plot <= dec_max)
         & np.isfinite(zmag)
     )
+    pluto_in_field = (ra_min <= pluto_ra_plot <= ra_max) and (dec_min <= dec_center <= dec_max)
 
     ra_plot = ra_plot[inside]
     dec_plot = dec_plot[inside]
@@ -312,9 +323,12 @@ def make_plot(
     ax.set_title(title, color="black", fontsize=11)
 
     info = (
+        f"Center RA: {format_ra_hhmm(chart_center.ra.deg)}\n"
+        f"Center Dec: {format_dec_ddmm(chart_center.dec.deg)}\n"
         f"Pluto RA:  {format_ra_hhmm(pluto.ra.deg)}\n"
         f"Pluto Dec: {format_dec_ddmm(pluto.dec.deg)}\n"
         f"Pluto diameter: {pluto_diameter_arcsec:.3f}\"\n"
+        f"Pluto in field: {'yes' if pluto_in_field else 'no'}\n"
         f"Stars plotted: {len(zmag)}"
     )
     ax.text(
@@ -336,7 +350,7 @@ def make_plot(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot a printable Pluto finder chart with Pan-STARRS DR1 star positions and z-band brightness."
+        description="Plot a printable Pluto finder chart with Pan-STARRS DR1 stars (z-band sizing)."
     )
     parser.add_argument(
         "--datetime",
@@ -366,19 +380,49 @@ def main():
         default=240,
         help="Output DPI (default: 240). Used for 1-pixel faint-star size floor.",
     )
+    parser.add_argument(
+        "--center-ra",
+        type=float,
+        default=None,
+        help="Optional fixed chart center RA in degrees (J2000). Use with --center-dec.",
+    )
+    parser.add_argument(
+        "--center-dec",
+        type=float,
+        default=None,
+        help="Optional fixed chart center Dec in degrees (J2000). Use with --center-ra.",
+    )
+    parser.add_argument(
+        "--center-datetime",
+        default=None,
+        help="Optional fixed center from Pluto position at this ISO datetime. Ignored if --center-ra/--center-dec are set.",
+    )
     args = parser.parse_args()
 
     obstime = parse_time(args.datetime)
     pluto = pluto_icrs(obstime)
     pluto_diam_arcsec = pluto_apparent_diameter_arcsec(pluto)
 
+    if (args.center_ra is None) != (args.center_dec is None):
+        raise ValueError("Provide both --center-ra and --center-dec, or neither.")
+
+    if args.center_ra is not None:
+        chart_center = SkyCoord(ra=args.center_ra * u.deg, dec=args.center_dec * u.deg, frame="icrs")
+    elif args.center_datetime is not None:
+        center_time = parse_time(args.center_datetime)
+        chart_center = pluto_icrs(center_time)
+    else:
+        # Default behavior: chart follows Pluto (so Pluto stays near center)
+        chart_center = pluto
+
     # Circumscribed radius so corners of the square field are covered.
     query_radius = np.hypot(args.fov / 2.0, args.fov / 2.0) * u.deg
 
-    ps1_coords, zmag = query_ps1_sources(pluto, query_radius, args.zmag_limit)
+    ps1_coords, zmag = query_ps1_sources(chart_center, query_radius, args.zmag_limit)
 
     make_plot(
         pluto=pluto,
+        chart_center=chart_center,
         obstime=obstime,
         star_coords=ps1_coords,
         zmag=zmag,
