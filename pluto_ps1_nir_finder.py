@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Create a printable Pluto finder chart using Pan-STARRS DR1 only:
-  - Pluto position at a user-specified date/time
+  - Pluto apparent geocentric/topocentric position at a user-specified date/time
   - Pan-STARRS DR1 stellar positions (RA/Dec)
   - Pan-STARRS DR1 z-band magnitudes for star-dot scaling
 
@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 from astroquery.vizier import Vizier
-from astropy.coordinates import SkyCoord, get_body, solar_system_ephemeris
+from astropy.coordinates import SkyCoord, EarthLocation, get_body, solar_system_ephemeris
 from astropy.time import Time
 from matplotlib.patches import Ellipse
 
@@ -41,15 +41,22 @@ def parse_time(dt_text: str) -> Time:
     return Time(dt)
 
 
-def pluto_icrs(obstime: Time) -> SkyCoord:
-    """Get Pluto ICRS coordinates at obstime."""
-    for eph in ("de440s", "builtin"):
+def pluto_apparent(obstime: Time, location: EarthLocation | None = None) -> SkyCoord:
+    """
+    Get Pluto apparent coordinates as seen from Earth (GCRS).
+
+    This is the coordinate type to compare with planetarium software views.
+    """
+    last_error = None
+    for eph in ("de440s", "de440", "de432s"):
         try:
             with solar_system_ephemeris.set(eph):
-                return get_body("pluto", obstime).icrs
-        except Exception:
+                return get_body("pluto", obstime, location=location)
+        except Exception as exc:
+            last_error = exc
             continue
-    raise RuntimeError("Could not compute Pluto position with available ephemerides.")
+
+    raise RuntimeError(f"Could not compute Pluto position with available ephemerides: {last_error}")
 
 
 def pluto_apparent_diameter_arcsec(pluto: SkyCoord) -> float:
@@ -235,6 +242,7 @@ def make_plot(
     ra_plot = unwrap_ra_around(star_coords.ra.deg, ra_center)
     dec_plot = star_coords.dec.deg
     pluto_ra_plot = unwrap_ra_around(np.array([pluto.ra.deg]), ra_center)[0]
+    pluto_dec_plot = pluto.dec.deg
 
     # Set field limits in absolute RA/Dec.
     dec_half = fov_deg / 2.0
@@ -253,7 +261,7 @@ def make_plot(
         & (dec_plot <= dec_max)
         & np.isfinite(zmag)
     )
-    pluto_in_field = (ra_min <= pluto_ra_plot <= ra_max) and (dec_min <= dec_center <= dec_max)
+    pluto_in_field = (ra_min <= pluto_ra_plot <= ra_max) and (dec_min <= pluto_dec_plot <= dec_max)
 
     ra_plot = ra_plot[inside]
     dec_plot = dec_plot[inside]
@@ -276,7 +284,7 @@ def make_plot(
         pluto_diam_ra_deg = pluto_diam_dec_deg / cos_dec
         ax.add_patch(
             Ellipse(
-                (pluto_ra_plot, dec_center),
+                (pluto_ra_plot, pluto_dec_plot),
                 width=pluto_diam_ra_deg,
                 height=pluto_diam_dec_deg,
                 facecolor="#c62828",
@@ -289,7 +297,7 @@ def make_plot(
     # Small solid marker for visibility at normal chart scales.
     ax.scatter(
         [pluto_ra_plot],
-        [dec_center],
+        [pluto_dec_plot],
         s=20,
         c="#c62828",
         edgecolors="black",
@@ -378,29 +386,58 @@ def main():
         "--dpi",
         type=int,
         default=240,
-        help="Output DPI (default: 240). Used for 1-pixel faint-star size floor.",
+        help="Output DPI (default: 240). Used for faint-star minimum diameter scaling.",
     )
     parser.add_argument(
         "--center-ra",
         type=float,
         default=None,
-        help="Optional fixed chart center RA in degrees (J2000). Use with --center-dec.",
+        help="Optional fixed chart center RA in degrees. Use with --center-dec.",
     )
     parser.add_argument(
         "--center-dec",
         type=float,
         default=None,
-        help="Optional fixed chart center Dec in degrees (J2000). Use with --center-ra.",
+        help="Optional fixed chart center Dec in degrees. Use with --center-ra.",
     )
     parser.add_argument(
         "--center-datetime",
         default=None,
         help="Optional fixed center from Pluto position at this ISO datetime. Ignored if --center-ra/--center-dec are set.",
     )
+    parser.add_argument(
+        "--observer-lat",
+        type=float,
+        default=None,
+        help="Observer latitude in degrees (optional; use with --observer-lon for topocentric Pluto).",
+    )
+    parser.add_argument(
+        "--observer-lon",
+        type=float,
+        default=None,
+        help="Observer longitude in degrees (east positive; optional; use with --observer-lat).",
+    )
+    parser.add_argument(
+        "--observer-elevation-m",
+        type=float,
+        default=0.0,
+        help="Observer elevation in meters (default: 0).",
+    )
     args = parser.parse_args()
 
+    if (args.observer_lat is None) != (args.observer_lon is None):
+        raise ValueError("Provide both --observer-lat and --observer-lon, or neither.")
+
+    location = None
+    if args.observer_lat is not None:
+        location = EarthLocation.from_geodetic(
+            lon=args.observer_lon * u.deg,
+            lat=args.observer_lat * u.deg,
+            height=args.observer_elevation_m * u.m,
+        )
+
     obstime = parse_time(args.datetime)
-    pluto = pluto_icrs(obstime)
+    pluto = pluto_apparent(obstime, location=location)
     pluto_diam_arcsec = pluto_apparent_diameter_arcsec(pluto)
 
     if (args.center_ra is None) != (args.center_dec is None):
@@ -410,7 +447,7 @@ def main():
         chart_center = SkyCoord(ra=args.center_ra * u.deg, dec=args.center_dec * u.deg, frame="icrs")
     elif args.center_datetime is not None:
         center_time = parse_time(args.center_datetime)
-        chart_center = pluto_icrs(center_time)
+        chart_center = pluto_apparent(center_time, location=location)
     else:
         # Default behavior: chart follows Pluto (so Pluto stays near center)
         chart_center = pluto
@@ -418,7 +455,9 @@ def main():
     # Circumscribed radius so corners of the square field are covered.
     query_radius = np.hypot(args.fov / 2.0, args.fov / 2.0) * u.deg
 
-    ps1_coords, zmag = query_ps1_sources(chart_center, query_radius, args.zmag_limit)
+    # Query stars using the chart center's angular position only (no distance/origin translation).
+    query_center = SkyCoord(ra=chart_center.ra.deg * u.deg, dec=chart_center.dec.deg * u.deg, frame="icrs")
+    ps1_coords, zmag = query_ps1_sources(query_center, query_radius, args.zmag_limit)
 
     make_plot(
         pluto=pluto,

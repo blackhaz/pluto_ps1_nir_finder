@@ -172,6 +172,16 @@ python pluto_ps1_nir_finder.py \
 
 This creates `pluto_finder.png` in the current folder.
 
+Topocentric (observer-specific) example:
+
+```bash
+python pluto_ps1_nir_finder.py \
+  --datetime 2026-04-10T00:00:00+00:00 \
+  --observer-lat 52.5200 --observer-lon 13.4050 --observer-elevation-m 35 \
+  --fov 1.0 --zmag-limit 17.5 \
+  --output pluto_finder_berlin.png
+```
+
 ---
 
 ## 7) CLI options
@@ -182,9 +192,12 @@ This creates `pluto_finder.png` in the current folder.
 --zmag-limit       Faintest z magnitude to include (default: 18.0)
 --dpi              Output DPI (default: 240)
 --output           Output image filename (default: pluto_finder_ps1_z_printable.png)
---center-ra        Optional fixed chart center RA in deg (J2000)
---center-dec       Optional fixed chart center Dec in deg (J2000)
+--center-ra        Optional fixed chart center RA in deg
+--center-dec       Optional fixed chart center Dec in deg
 --center-datetime  Optional fixed center = Pluto position at this datetime
+--observer-lat     Optional observer latitude in deg (for topocentric Pluto)
+--observer-lon     Optional observer longitude in deg, east positive
+--observer-elevation-m  Optional observer elevation in meters (default: 0)
 ```
 
 ### Centering behavior
@@ -248,6 +261,20 @@ This is expected if chart center follows Pluto (default). Use fixed center:
 - `--center-datetime <baseline_date>`
   or
 - `--center-ra ... --center-dec ...`
+
+### Pluto position does not match Stellarium
+
+Use the same time, location, and coordinate mode when comparing:
+
+- Set `--datetime` exactly (including timezone offset)
+- If needed, pass observer site:
+  - `--observer-lat`
+  - `--observer-lon`
+  - `--observer-elevation-m`
+- In Stellarium, compare using **J2000/ICRF-like equatorial coordinates** (not apparent-of-date readout)
+
+The script computes Pluto as an Earth-observed apparent position (GCRS) and uses Pan-STARRS J2000 star coordinates.
+Small arcsecond-level differences may still occur vs. Stellarium due to ephemeris/model differences.
 
 ### `ModuleNotFoundError`
 
