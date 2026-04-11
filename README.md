@@ -4,7 +4,7 @@
 
 - Pluto position at a chosen date/time (Astropy ephemerides)
 - Pan-STARRS DR1 stars (`II/349/ps1`) for RA/Dec and brightness
-- **z-band magnitudes only** for star size scaling
+- **r-band magnitudes only** for star size scaling
 - Black-on-white atlas style with RA/Dec grid, N/E arrows, and Pluto marker
 
 ---
@@ -165,7 +165,7 @@ Example:
 python pluto_ps1_nir_finder.py \
   --datetime 2026-04-10T00:00:00+00:00 \
   --fov 3.0 \
-  --zmag-limit 15.0 \
+  --rmag-limit 15.0 \
   --dpi 240 \
   --output pluto_finder.png
 ```
@@ -178,7 +178,7 @@ Topocentric (observer-specific) example:
 python pluto_ps1_nir_finder.py \
   --datetime 2026-04-10T00:00:00+00:00 \
   --observer-lat 52.5200 --observer-lon 13.4050 --observer-elevation-m 35 \
-  --fov 1.0 --zmag-limit 17.5 \
+  --fov 1.0 --rmag-limit 17.5 \
   --output pluto_finder_berlin.png
 ```
 
@@ -189,9 +189,9 @@ python pluto_ps1_nir_finder.py \
 ```text
 --datetime         Required. ISO datetime, e.g. 2026-07-15T22:30:00+00:00
 --fov              Field width in degrees (default: 1.2)
---zmag-limit       Faintest z magnitude to include (default: 18.0)
+--rmag-limit       Faintest r magnitude to include (default: 18.0)
 --dpi              Output DPI (default: 240)
---output           Output image filename (default: pluto_finder_ps1_z_printable.png)
+--output           Output image filename (default: pluto_finder_ps1_r_printable.png)
 --center-ra        Optional fixed chart center RA in deg
 --center-dec       Optional fixed chart center Dec in deg
 --center-datetime  Optional fixed center = Pluto position at this datetime
@@ -217,12 +217,12 @@ Generate two charts with the **same center**:
 python pluto_ps1_nir_finder.py \
   --datetime 2026-04-10T00:00:00+00:00 \
   --center-datetime 2026-04-10T00:00:00+00:00 \
-  --fov 0.8 --zmag-limit 17.5 --output chart_2026-04-10.png
+  --fov 0.8 --rmag-limit 17.5 --output chart_2026-04-10.png
 
 python pluto_ps1_nir_finder.py \
   --datetime 2026-05-10T00:00:00+00:00 \
   --center-datetime 2026-04-10T00:00:00+00:00 \
-  --fov 0.8 --zmag-limit 17.5 --output chart_2026-05-10.png
+  --fov 0.8 --rmag-limit 17.5 --output chart_2026-05-10.png
 ```
 
 Now the stars stay fixed and Pluto position shifts.
@@ -231,7 +231,7 @@ Now the stars stay fixed and Pluto position shifts.
 
 ## 9) Star size model used
 
-Star diameters are atlas-style, based on z magnitude:
+Star diameters are atlas-style, based on r magnitude:
 
 - mag 0 → 20 mm
 - mag 1 → 10 mm
@@ -242,7 +242,7 @@ Then all diameters are scaled by the script constant:
 
 - `STAR_DIAMETER_SCALE = 2.0`
 
-Faintest stars at `--zmag-limit` are forced to at least **2 output pixels diameter** (because of the 2x scale).
+Faintest stars at `--rmag-limit` are forced to at least **2 output pixels diameter** (because of the 2x scale).
 
 ---
 
@@ -251,7 +251,7 @@ Faintest stars at `--zmag-limit` are forced to at least **2 output pixels diamet
 ### No chart or “No Pan-STARRS DR1 sources returned”
 
 - Increase `--fov` (e.g., `1.2` → `3.0`)
-- Use a fainter `--zmag-limit` (e.g., `15` → `18`)
+- Use a fainter `--rmag-limit` (e.g., `15` → `18`)
 - Check internet/firewall/proxy
 
 ### Pluto seems not moving when date changes
@@ -299,7 +299,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```bash
 python pluto_ps1_nir_finder.py \
   --datetime 2026-04-10T00:00:00+00:00 \
-  --fov 0.8 --zmag-limit 17.5 \
+  --fov 0.8 --rmag-limit 17.5 \
   --output test_chart.png
 ```
 

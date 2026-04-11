@@ -3,7 +3,7 @@
 Create a printable Pluto finder chart using Pan-STARRS DR1 only:
   - Pluto apparent geocentric/topocentric position at a user-specified date/time
   - Pan-STARRS DR1 stellar positions (RA/Dec)
-  - Pan-STARRS DR1 z-band magnitudes for star-dot scaling
+  - Pan-STARRS DR1 r-band magnitudes for star-dot scaling
 
 This version does NOT query APASS.
 
@@ -78,11 +78,11 @@ def col_as_float(col) -> np.ndarray:
     return np.array(arr, dtype=float)
 
 
-def query_ps1_sources(center: SkyCoord, radius: u.Quantity, zmag_limit: float):
-    """Query Pan-STARRS DR1 positions and z magnitudes around the field center."""
+def query_ps1_sources(center: SkyCoord, radius: u.Quantity, rmag_limit: float):
+    """Query Pan-STARRS DR1 positions and r magnitudes around the field center."""
     v = Vizier(
-        columns=["RAJ2000", "DEJ2000", "zmag"],
-        column_filters={"zmag": f"<={zmag_limit:.3f}"},
+        columns=["RAJ2000", "DEJ2000", "rmag"],
+        column_filters={"rmag": f"<={rmag_limit:.3f}"},
         row_limit=-1,
     )
     tables = v.query_region(center, radius=radius, catalog=PS1_CATALOG)
@@ -92,23 +92,23 @@ def query_ps1_sources(center: SkyCoord, radius: u.Quantity, zmag_limit: float):
     t = tables[0]
     ra = col_as_float(t["RAJ2000"])
     dec = col_as_float(t["DEJ2000"])
-    zmag = col_as_float(t["zmag"])
+    rmag = col_as_float(t["rmag"])
 
-    good = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(zmag)
+    good = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(rmag)
     if not np.any(good):
-        raise RuntimeError("Pan-STARRS query returned no usable (RA, Dec, zmag) rows.")
+        raise RuntimeError("Pan-STARRS query returned no usable (RA, Dec, rmag) rows.")
 
     coords = SkyCoord(ra=ra[good] * u.deg, dec=dec[good] * u.deg)
-    return coords, zmag[good]
+    return coords, rmag[good]
 
 
 def magnitude_to_marker_size(
-    zmag: np.ndarray,
-    zmag_limit: float,
+    rmag: np.ndarray,
+    rmag_limit: float,
     output_dpi: int,
 ) -> np.ndarray:
     """
-    Map z-band magnitudes to marker area (points^2) using atlas-like diameters.
+    Map r-band magnitudes to marker area (points^2) using atlas-like diameters.
 
     Diameter anchors (in mm):
       mag 0 -> 20 mm
@@ -119,24 +119,24 @@ def magnitude_to_marker_size(
     All diameters are multiplied by STAR_DIAMETER_SCALE.
 
     For magnitudes fainter than 4, diameter decreases smoothly (log-space interpolation)
-    down to STAR_DIAMETER_SCALE output pixels at zmag_limit.
+    down to STAR_DIAMETER_SCALE output pixels at rmag_limit.
     """
-    zmag = np.asarray(zmag, dtype=float)
+    rmag = np.asarray(rmag, dtype=float)
 
     scale = STAR_DIAMETER_SCALE
 
     # Scaled output-pixel floor converted to mm at the chosen save DPI.
     min_diam_mm = scale * 25.4 / float(output_dpi)
 
-    if zmag_limit <= 4.0:
+    if rmag_limit <= 4.0:
         mag_nodes = np.array([0.0, 1.0, 3.0, 4.0], dtype=float)
         diam_nodes_mm = np.array([20.0 * scale, 10.0 * scale, 5.0 * scale, 2.0 * scale], dtype=float)
     else:
-        mag_nodes = np.array([0.0, 1.0, 3.0, 4.0, zmag_limit], dtype=float)
+        mag_nodes = np.array([0.0, 1.0, 3.0, 4.0, rmag_limit], dtype=float)
         diam_nodes_mm = np.array([20.0 * scale, 10.0 * scale, 5.0 * scale, 2.0 * scale, min_diam_mm], dtype=float)
 
     # Interpolate diameters in log-space so size changes feel atlas-like and smooth.
-    mags = np.clip(zmag, mag_nodes[0], mag_nodes[-1])
+    mags = np.clip(rmag, mag_nodes[0], mag_nodes[-1])
     log_d = np.interp(mags, mag_nodes, np.log10(diam_nodes_mm))
     diam_mm = 10.0 ** log_d
 
@@ -227,8 +227,8 @@ def make_plot(
     chart_center: SkyCoord,
     obstime: Time,
     star_coords: SkyCoord,
-    zmag: np.ndarray,
-    zmag_limit: float,
+    rmag: np.ndarray,
+    rmag_limit: float,
     fov_deg: float,
     pluto_diameter_arcsec: float,
     output: str,
@@ -259,23 +259,23 @@ def make_plot(
         & (ra_plot <= ra_max)
         & (dec_plot >= dec_min)
         & (dec_plot <= dec_max)
-        & np.isfinite(zmag)
+        & np.isfinite(rmag)
     )
     pluto_in_field = (ra_min <= pluto_ra_plot <= ra_max) and (dec_min <= pluto_dec_plot <= dec_max)
 
     ra_plot = ra_plot[inside]
     dec_plot = dec_plot[inside]
-    zmag = zmag[inside]
+    rmag = rmag[inside]
 
-    if len(zmag) == 0:
+    if len(rmag) == 0:
         raise RuntimeError("No stars remain inside the requested chart bounds.")
 
-    sizes = magnitude_to_marker_size(zmag, zmag_limit=zmag_limit, output_dpi=output_dpi)
+    sizes = magnitude_to_marker_size(rmag, rmag_limit=rmag_limit, output_dpi=output_dpi)
 
     fig, ax = plt.subplots(figsize=(8.2, 8.2), facecolor="white")
     ax.set_facecolor("white")
 
-    # Stars: black opaque dots, size from z-band magnitude.
+    # Stars: black opaque dots, size from r-band magnitude.
     ax.scatter(ra_plot, dec_plot, s=sizes, c="black", alpha=1.0, linewidths=0, zorder=2)
 
     # Pluto true apparent-size marker (ellipse in RA/Dec coordinates).
@@ -326,7 +326,7 @@ def make_plot(
 
     title = (
         f"Pluto Finder Chart  |  {obstime.utc.isot} UTC\n"
-        f"Pan-STARRS DR1 positions and z-band magnitudes"
+        f"Pan-STARRS DR1 positions and r-band magnitudes"
     )
     ax.set_title(title, color="black", fontsize=11)
 
@@ -337,7 +337,7 @@ def make_plot(
         f"Pluto Dec: {format_dec_ddmm(pluto.dec.deg)}\n"
         f"Pluto diameter: {pluto_diameter_arcsec:.3f}\"\n"
         f"Pluto in field: {'yes' if pluto_in_field else 'no'}\n"
-        f"Stars plotted: {len(zmag)}"
+        f"Stars plotted: {len(rmag)}"
     )
     ax.text(
         0.99,
@@ -358,7 +358,7 @@ def make_plot(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot a printable Pluto finder chart with Pan-STARRS DR1 stars (z-band sizing)."
+        description="Plot a printable Pluto finder chart with Pan-STARRS DR1 stars (r-band sizing)."
     )
     parser.add_argument(
         "--datetime",
@@ -372,14 +372,21 @@ def main():
         help="Field of view width in degrees (default: 1.2)",
     )
     parser.add_argument(
-        "--zmag-limit",
+        "--rmag-limit",
         type=float,
         default=18.0,
-        help="Faint z-band magnitude limit (default: 18.0)",
+        help="Faint r-band magnitude limit (default: 18.0)",
+    )
+    # Backward-compatible alias (hidden from help)
+    parser.add_argument(
+        "--zmag-limit",
+        dest="rmag_limit",
+        type=float,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--output",
-        default="pluto_finder_ps1_z_printable.png",
+        default="pluto_finder_ps1_r_printable.png",
         help="Output image path",
     )
     parser.add_argument(
@@ -457,15 +464,15 @@ def main():
 
     # Query stars using the chart center's angular position only (no distance/origin translation).
     query_center = SkyCoord(ra=chart_center.ra.deg * u.deg, dec=chart_center.dec.deg * u.deg, frame="icrs")
-    ps1_coords, zmag = query_ps1_sources(query_center, query_radius, args.zmag_limit)
+    ps1_coords, rmag = query_ps1_sources(query_center, query_radius, args.rmag_limit)
 
     make_plot(
         pluto=pluto,
         chart_center=chart_center,
         obstime=obstime,
         star_coords=ps1_coords,
-        zmag=zmag,
-        zmag_limit=args.zmag_limit,
+        rmag=rmag,
+        rmag_limit=args.rmag_limit,
         fov_deg=args.fov,
         pluto_diameter_arcsec=pluto_diam_arcsec,
         output=args.output,
